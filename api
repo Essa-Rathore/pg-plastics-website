@@ -1,0 +1,152 @@
+api/order.js
+
+// Vercel serverless function: receives orders/reviews from the website and
+// forwards them to the shop owner on WhatsApp (via CallMeBot).
+// Setup: see SETUP.md. Environment variables are set in the Vercel dashboard.
+
+const PRODUCTS = {
+  "Chorus Mirror": 999,
+  "Polo Mirror": 1149,
+  "Mister Mirror": 999,
+  "Prego ABS Bath Set": 2599,
+  "Mister 5-Piece Bath Set": 999,
+  "Polo 7-Piece Bath Set": 1249,
+  "Marachi Center Push Flush Tank": 1949,
+  "Side Push Flush Tank": 1699,
+  "Porta Seat Cover": 1499,
+  "Hand Shower Chrome": 895,
+  "Flower Hand Shower": 849,
+  "Hand Shower Colour (Plastic)": 699
+};
+
+// Best-effort rate limit (per server instance): 6 requests / 10 min / IP
+const hits = new Map();
+function limited(ip) {
+  const now = Date.now(), win = 10 * 60 * 1000;
+  const a = (hits.get(ip) || []).filter(t => now - t < win);
+  a.push(now);
+  hits.set(ip, a);
+  if (hits.size > 5000) hits.clear();
+  return a.length > 6;
+}
+
+const esc = s => String(s);
+const clean = (v, max) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, max);
+const money = n => "Rs. " + String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+function normPhone(v) {
+  let d = String(v || "").replace(/\D/g, "");
+  if (d.indexOf("92") === 0) d = "0" + d.slice(2);
+  return /^03\d{9}$/.test(d) ? d : "";
+}
+
+function orderId() {
+  const t = new Date(Date.now() + 5 * 3600 * 1000); // Pakistan time
+  const p = n => String(n).padStart(2, "0");
+  const rnd = Math.random().toString(36).slice(2, 5).toUpperCase();
+  return "PG-" + p(t.getUTCDate()) + p(t.getUTCMonth() + 1) + "-" + rnd + p(t.getUTCMinutes());
+}
+
+// Sends a WhatsApp message to the owner through the free CallMeBot service.
+async function sendWhatsApp(text) {
+  const phone = (process.env.CALLMEBOT_PHONE || "").replace(/[^\d]/g, "");
+  const key = process.env.CALLMEBOT_APIKEY;
+  if (!phone || !key) return null;
+  const url = "https://api.callmebot.com/whatsapp.php?phone=" + phone +
+    "&apikey=" + encodeURIComponent(key) + "&text=" + encodeURIComponent(text);
+  return fetch(url).then(r => r.ok).catch(() => false);
+}
+
+async function sendEmail(subject, html) {
+  const key = process.env.RESEND_API_KEY, to = process.env.ORDER_EMAIL_TO;
+  if (!key || !to) return null;
+  return fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+    body: JSON.stringify({
+      from: process.env.ORDER_EMAIL_FROM || "PG Plastics Orders <onboarding@resend.dev>",
+      to: to.split(",").map(s => s.trim()),
+      subject,
+      html
+    })
+  }).then(r => r.ok).catch(() => false);
+}
+
+async function notify(subject, html) {
+  const r = await Promise.all([sendWhatsApp(html), sendEmail(subject, html.replace(/\*/g, "").replace(/\n/g, "<br>"))]);
+  const configured = r.filter(x => x !== null);
+  if (!configured.length) return { configured: false, ok: false };
+  return { configured: true, ok: configured.some(Boolean) };
+}
+
+module.exports = async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ ok: false, error: "method" });
+  }
+
+  let b = req.body;
+  if (typeof b === "string") { try { b = JSON.parse(b); } catch (e) { b = null; } }
+  if (!b || typeof b !== "object") return res.status(400).json({ ok: false, error: "bad_request" });
+
+  // Honeypot: bots fill the hidden field. Pretend success, send nothing.
+  if (b.website) return res.status(200).json({ ok: true, id: "PG-0000", items: [], total: 0 });
+
+  const ip = String((req.headers["x-forwarded-for"] || "")).split(",")[0].trim() || "unknown";
+  if (limited(ip)) return res.status(429).json({ ok: false, error: "too_many" });
+
+  // ---------- Reviews ----------
+  if (b.type === "review") {
+    const product = clean(b.product, 80), name = clean(b.name, 60), text = clean(b.text, 400);
+    const rating = Math.round(+b.rating);
+    if (!(product in PRODUCTS) || !name || !text || !(rating >= 1 && rating <= 5))
+      return res.status(400).json({ ok: false, error: "invalid" });
+    const msg = "⭐ *New review (pending your approval)*\n" +
+      "Product: " + esc(product) + "\nRating: " + rating + "/5\nName: " + esc(name) + "\nReview: " + esc(text);
+    const r = await notify("New review: " + product, msg);
+    if (!r.ok) return res.status(r.configured ? 502 : 500).json({ ok: false, error: r.configured ? "send_failed" : "not_configured" });
+    return res.status(200).json({ ok: true });
+  }
+
+  // ---------- Orders ----------
+  const name = clean(b.name, 80), city = clean(b.city, 60), addr = clean(b.address, 300), notes = clean(b.notes, 300);
+  const phone = normPhone(b.phone);
+  if (!name || !city || !addr || !phone) return res.status(400).json({ ok: false, error: "invalid" });
+  if (!Array.isArray(b.items) || !b.items.length || b.items.length > 20) return res.status(400).json({ ok: false, error: "invalid" });
+
+  // Prices always come from this server, never from the browser.
+  const items = [];
+  let total = 0, pieces = 0;
+  for (const it of b.items) {
+    const n = clean(it && it.n, 80), q = Math.floor(+(it && it.q));
+    if (!(n in PRODUCTS) || !(q >= 1 && q <= 50)) return res.status(400).json({ ok: false, error: "invalid" });
+    const t = PRODUCTS[n] * q;
+    items.push({ n, q, t });
+    total += t; pieces += q;
+  }
+
+  const id = orderId();
+  const lines = items.map(i => "• " + esc(i.n) + " × " + i.q + " = " + money(i.t)).join("\n");
+  const wa = "https://wa.me/92" + phone.slice(1);
+  const msg =
+    "🛒 *New order " + id + "*\n\n" +
+    "*Name:* " + esc(name) + "\n" +
+    "*Phone:* " + phone + "\n" +
+    "*City:* " + esc(city) + "\n" +
+    "*Address:* " + esc(addr) + "\n\n" +
+    "*Items:*\n" + lines + "\n\n" +
+    "*Pieces:* " + pieces + "\n" +
+    "*Items total:* " + money(total) + "\n" +
+    "*Payment:* Cash on Delivery\n" +
+    "*Delivery charges:* to be confirmed" +
+    (notes ? "\n*Notes:* " + esc(notes) : "") +
+    "\n\nChat with customer: " + wa;
+
+  const r = await notify("New order " + id + " - " + name + " (" + money(total) + ")", msg);
+  if (!r.ok) {
+    console.error("Order " + id + " could not be delivered to owner", { configured: r.configured });
+    return res.status(r.configured ? 502 : 500).json({ ok: false, error: r.configured ? "send_failed" : "not_configured" });
+  }
+  return res.status(200).json({ ok: true, id, items, total });
+};
