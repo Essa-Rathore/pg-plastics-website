@@ -1,3 +1,5 @@
+api/order.js
+
 // Vercel serverless function: receives an order from the website and sends it
 // to the owner by email (Resend) and WhatsApp (CallMeBot). Prices are re-checked
 // here so a customer cannot change them in the browser.
