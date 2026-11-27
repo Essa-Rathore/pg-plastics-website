@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://pg-plastics-industry.vercel.app/sitemap.xml
+Sitemap: https://pg-plastics-website.vercel.app/sitemap.xml
