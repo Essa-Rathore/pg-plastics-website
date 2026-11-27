@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
-    <loc>https://pg-plastics-industry.vercel.app/</loc>
-    <lastmod>2026-11-26</lastmod>
+    <loc>https://pg-plastics-website.vercel.app/</loc>
+    <lastmod>2026-11-27</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
-    <image:image>
-      <image:loc>https://pg-plastics-industry.vercel.app/og-image.jpg</image:loc>
-      <image:caption>Marachi Center Push Flush Tank from PG Plastics Industry</image:caption>
-    </image:image>
+    <image:image><image:loc>https://pg-plastics-website.vercel.app/og-image.jpg</image:loc><image:caption>Marachi Center Push Flush Tank from PG Plastics Industry</image:caption></image:image>
+    <image:image><image:loc>https://pg-plastics-website.vercel.app/images/mirachi-tank.webp</image:loc><image:caption>Marachi Center Push Flush Tank</image:caption></image:image>
+    <image:image><image:loc>https://pg-plastics-website.vercel.app/images/side-push-tank.webp</image:loc><image:caption>Side Push Flush Tank</image:caption></image:image>
+    <image:image><image:loc>https://pg-plastics-website.vercel.app/images/prego-set.webp</image:loc><image:caption>Prego ABS 7-piece bath set</image:caption></image:image>
+    <image:image><image:loc>https://pg-plastics-website.vercel.app/images/porta-seat.webp</image:loc><image:caption>Porta seat cover with hydraulic system</image:caption></image:image>
   </url>
 </urlset>
